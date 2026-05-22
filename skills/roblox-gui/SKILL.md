@@ -1,7 +1,7 @@
 ---
 name: roblox-gui
 description: GUI systems, layout, responsiveness, cross-platform UI. ScreenGuis, UIListLayout, constraint-based design.
-last_reviewed: 2026-05-21
+last_reviewed: 2026-05-22
 ---
 
 <!-- Source: brockmartin/roblox-game-skill (MIT) -->
@@ -20,6 +20,87 @@ Load this reference when working on any UI-related task in Roblox:
 - Any 2D or 3D-attached interface elements
 
 All GUI code runs on the **client** (LocalScripts). UI objects live under `StarterGui` at edit time and are cloned into each player's `PlayerGui` at runtime.
+
+---
+
+## Design Guidelines
+
+<!-- Guidelines sourced from Roblox DevForum, official docs, and community standards -->
+
+### Container Frame Rule
+<!-- Source: epochzx, Roblox DevForum -->
+
+**Never place UI elements directly under a ScreenGui.** Always create a transparent Container Frame as the first child with `Size = {1,0},{1,0}` and `BackgroundTransparency = 1`. Its `AbsoluteSize` always matches screen resolution.
+
+```luau
+local container = Instance.new("Frame")
+container.Name = "Container"
+container.Size = UDim2.new(1, 0, 1, 0)
+container.BackgroundTransparency = 1
+container.BorderSizePixel = 0
+container.Parent = screenGui
+-- All UI children go under container, not directly under screenGui
+```
+
+### Scale vs Offset
+<!-- Source: uiuxartist (Roblox Staff), DevForum -->
+
+- **Scale** = percentage of parent (responsive). Use for Size and Position.
+- **Offset** = fixed pixels. Use for pixel-perfect icons, small graphics, UIStroke.
+- **UIStroke** does NOT support Scale — only Offset.
+- **UICorner** DOES support Scale (`UDim.new(0.5, 0)` = 50% radius).
+- **Hybrid pattern**: start pure Scale, add Offset for minimum size, reduce Scale.
+
+```luau
+-- Scale for responsive sizing
+frame.Size = UDim2.new(0.5, 0, 0, 40)  -- 50% width, 40px height
+
+-- Offset for UIStroke (Scale not supported)
+stroke.Thickness = 2  -- always Offset
+
+-- UICorner supports Scale
+corner.CornerRadius = UDim.new(0, 8)    -- Offset
+corner.CornerRadius = UDim.new(0.5, 0)  -- Scale (50% of smallest axis)
+```
+
+### Mobile-First Principles
+<!-- Source: Roblox official docs — Adaptive Design Guidelines -->
+<!-- https://create.roblox.com/docs/production/publishing/adaptive-design -->
+
+- **50%+ of Roblox players are on mobile.** Design touch-first.
+- Minimum touch target: **~0.15 width scale** (≈44-48px).
+- Account for notches via `ScreenGui.ScreenInsets`.
+- Don't place UI in the top 58px (Roblox top bar) or bottom virtual controls.
+- **Test with Device Emulator** before publishing (View → Device Emulator).
+
+### Typography
+<!-- Source: PictureFolder, Roblox DevForum (119 likes) -->
+<!-- "Designing UI - Tips and Best Practices" -->
+
+- **Two fonts max**: Display (headers/buttons) + Body (descriptions).
+- **Gotham** is the de facto modern Roblox font.
+- **NEVER** pure white (`#FFFFFF`) on pure black (`#000000`). Use off-white (`#F0F0F0`) on dark gray (`#1E1E1E`).
+- **Size hierarchy**: bigger/bolder = more important.
+
+### Color
+<!-- Source: DevForum "Modern UI Colour Schemes" -->
+
+- Dark palette: `20,20,20` (Modern Black) to `35,35,35` (Very Light). Don't go lighter than 35.
+- Grey base + accent colors for interactive elements.
+- **Pick a palette and stick to it.** Consistency > variety.
+
+### Common AI UI Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Elements directly under ScreenGui | Use a Container Frame child |
+| Pure Scale only | Too small on mobile — add Offset minimums |
+| Pure Offset only | Breaks on different resolutions |
+| Pure white on pure black text | Use off-white on dark gray |
+| Ignoring mobile players | 50%+ are mobile; design touch-first |
+| Text-heavy UI for young audiences | Use icons, images, minimal text |
+| UI overlapping top bar / chat / leaderboard | Respect safe areas (top 58px, bottom 100px) |
+| Not testing with Device Emulator | Always test before publishing |
 
 ---
 
@@ -544,805 +625,214 @@ ContextActionService:UnbindAction("Interact")
 
 ### Shop Interface
 
-A complete shop system with a grid of items, currency display, and purchase flow.
+Pattern: item card in a grid with hover effect, tween animations, server-validated purchase.
 
 ```luau
--- LocalScript in StarterPlayerScripts or StarterGui
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Remote for server-validated purchases
-local purchaseRemote = ReplicatedStorage:WaitForChild("PurchaseItem")
-local getCoinsRemote = ReplicatedStorage:WaitForChild("GetCoins")
-
---------------------------------------------------------------------------------
--- Data
---------------------------------------------------------------------------------
-
-local SHOP_ITEMS = {
-    { id = "sword", name = "Iron Sword", price = 100, icon = "rbxassetid://111111111" },
-    { id = "shield", name = "Oak Shield", price = 150, icon = "rbxassetid://222222222" },
-    { id = "potion", name = "Health Potion", price = 50, icon = "rbxassetid://333333333" },
-    { id = "boots", name = "Speed Boots", price = 200, icon = "rbxassetid://444444444" },
-    { id = "ring", name = "Power Ring", price = 300, icon = "rbxassetid://555555555" },
-    { id = "cape", name = "Shadow Cape", price = 500, icon = "rbxassetid://666666666" },
-}
-
---------------------------------------------------------------------------------
--- Create GUI Structure
---------------------------------------------------------------------------------
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ShopGui"
-screenGui.ResetOnSpawn = false
-screenGui.DisplayOrder = 20
-screenGui.Enabled = false
-screenGui.Parent = playerGui
-
--- Dark overlay behind shop
-local overlay = Instance.new("Frame")
-overlay.Name = "Overlay"
-overlay.Size = UDim2.new(1, 0, 1, 0)
-overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-overlay.BackgroundTransparency = 0.4
-overlay.BorderSizePixel = 0
-overlay.Parent = screenGui
-
--- Main shop panel
-local shopPanel = Instance.new("Frame")
-shopPanel.Name = "ShopPanel"
-shopPanel.Size = UDim2.new(0.6, 0, 0.7, 0)
-shopPanel.Position = UDim2.new(0.5, 0, 0.5, 0)
-shopPanel.AnchorPoint = Vector2.new(0.5, 0.5)
-shopPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-shopPanel.BorderSizePixel = 0
-shopPanel.Parent = screenGui
-
-local panelCorner = Instance.new("UICorner")
-panelCorner.CornerRadius = UDim.new(0, 12)
-panelCorner.Parent = shopPanel
-
-local panelStroke = Instance.new("UIStroke")
-panelStroke.Color = Color3.fromRGB(80, 80, 120)
-panelStroke.Thickness = 2
-panelStroke.Parent = shopPanel
-
-local panelPadding = Instance.new("UIPadding")
-panelPadding.PaddingLeft = UDim.new(0, 16)
-panelPadding.PaddingRight = UDim.new(0, 16)
-panelPadding.PaddingTop = UDim.new(0, 16)
-panelPadding.PaddingBottom = UDim.new(0, 16)
-panelPadding.Parent = shopPanel
-
--- Header bar
-local header = Instance.new("Frame")
-header.Name = "Header"
-header.Size = UDim2.new(1, 0, 0, 50)
-header.BackgroundTransparency = 1
-header.Parent = shopPanel
-
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(0.5, 0, 1, 0)
-titleLabel.Text = "SHOP"
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 28
-titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.BackgroundTransparency = 1
-titleLabel.Parent = header
-
-local coinsLabel = Instance.new("TextLabel")
-coinsLabel.Name = "CoinsLabel"
-coinsLabel.Size = UDim2.new(0.3, 0, 1, 0)
-coinsLabel.Position = UDim2.new(0.5, 0, 0, 0)
-coinsLabel.Text = "0 Coins"
-coinsLabel.Font = Enum.Font.GothamBold
-coinsLabel.TextSize = 22
-coinsLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-coinsLabel.TextXAlignment = Enum.TextXAlignment.Right
-coinsLabel.BackgroundTransparency = 1
-coinsLabel.Parent = header
-
-local closeButton = Instance.new("TextButton")
-closeButton.Name = "CloseButton"
-closeButton.Size = UDim2.new(0, 40, 0, 40)
-closeButton.Position = UDim2.new(1, 0, 0, 0)
-closeButton.AnchorPoint = Vector2.new(1, 0)
-closeButton.Text = "X"
-closeButton.Font = Enum.Font.GothamBold
-closeButton.TextSize = 20
-closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeButton.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-closeButton.BorderSizePixel = 0
-closeButton.Parent = header
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 8)
-closeCorner.Parent = closeButton
-
--- Scrolling item grid
-local scrollFrame = Instance.new("ScrollingFrame")
-scrollFrame.Name = "ItemGrid"
-scrollFrame.Size = UDim2.new(1, 0, 1, -60)
-scrollFrame.Position = UDim2.new(0, 0, 0, 60)
-scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scrollFrame.ScrollBarThickness = 6
-scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(120, 120, 160)
-scrollFrame.BackgroundTransparency = 1
-scrollFrame.BorderSizePixel = 0
-scrollFrame.Parent = shopPanel
-
-local gridLayout = Instance.new("UIGridLayout")
-gridLayout.CellSize = UDim2.new(0, 140, 0, 180)
-gridLayout.CellPadding = UDim2.new(0, 12, 0, 12)
-gridLayout.FillDirection = Enum.FillDirection.Horizontal
-gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
-gridLayout.Parent = scrollFrame
-
-local gridPadding = Instance.new("UIPadding")
-gridPadding.PaddingTop = UDim.new(0, 8)
-gridPadding.Parent = scrollFrame
-
---------------------------------------------------------------------------------
--- Create Item Cards
---------------------------------------------------------------------------------
-
-local function createItemCard(itemData: { id: string, name: string, price: number, icon: string }, layoutOrder: number): Frame
+-- Pattern: Shop item card with hover + purchase
+local function createItemCard(item, parent)
     local card = Instance.new("Frame")
-    card.Name = itemData.id
-    card.LayoutOrder = layoutOrder
+    card.Name = item.id
     card.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
     card.BorderSizePixel = 0
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
+    Instance.new("UIStroke", card).Color = Color3.fromRGB(60, 60, 90)
 
-    local cardCorner = Instance.new("UICorner")
-    cardCorner.CornerRadius = UDim.new(0, 8)
-    cardCorner.Parent = card
-
-    local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromRGB(60, 60, 90)
-    cardStroke.Thickness = 1
-    cardStroke.Parent = card
-
-    -- Item icon
-    local icon = Instance.new("ImageLabel")
-    icon.Name = "Icon"
+    local icon = Instance.new("ImageLabel", card)
     icon.Size = UDim2.new(0.6, 0, 0, 70)
     icon.Position = UDim2.new(0.5, 0, 0, 10)
     icon.AnchorPoint = Vector2.new(0.5, 0)
-    icon.Image = itemData.icon
+    icon.Image = item.icon
     icon.ScaleType = Enum.ScaleType.Fit
     icon.BackgroundTransparency = 1
-    icon.Parent = card
 
-    -- Item name
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name = "ItemName"
+    local nameLabel = Instance.new("TextLabel", card)
     nameLabel.Size = UDim2.new(0.9, 0, 0, 22)
     nameLabel.Position = UDim2.new(0.5, 0, 0, 88)
     nameLabel.AnchorPoint = Vector2.new(0.5, 0)
-    nameLabel.Text = itemData.name
+    nameLabel.Text = item.name
     nameLabel.Font = Enum.Font.GothamBold
-    nameLabel.TextSize = 14
-    nameLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
-    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    nameLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
     nameLabel.BackgroundTransparency = 1
-    nameLabel.Parent = card
 
-    -- Price label
-    local priceLabel = Instance.new("TextLabel")
-    priceLabel.Name = "Price"
-    priceLabel.Size = UDim2.new(0.9, 0, 0, 20)
-    priceLabel.Position = UDim2.new(0.5, 0, 0, 112)
-    priceLabel.AnchorPoint = Vector2.new(0.5, 0)
-    priceLabel.Text = tostring(itemData.price) .. " Coins"
-    priceLabel.Font = Enum.Font.Gotham
-    priceLabel.TextSize = 13
-    priceLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-    priceLabel.BackgroundTransparency = 1
-    priceLabel.Parent = card
+    local buyBtn = Instance.new("TextButton", card)
+    buyBtn.Size = UDim2.new(0.8, 0, 0, 32)
+    buyBtn.Position = UDim2.new(0.5, 0, 1, -10)
+    buyBtn.AnchorPoint = Vector2.new(0.5, 1)
+    buyBtn.Text = `${item.price} Coins`
+    buyBtn.Font = Enum.Font.GothamBold
+    buyBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
+    buyBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 70)
+    Instance.new("UICorner", buyBtn).CornerRadius = UDim.new(0, 6)
 
-    -- Buy button
-    local buyButton = Instance.new("TextButton")
-    buyButton.Name = "BuyButton"
-    buyButton.Size = UDim2.new(0.8, 0, 0, 32)
-    buyButton.Position = UDim2.new(0.5, 0, 1, -10)
-    buyButton.AnchorPoint = Vector2.new(0.5, 1)
-    buyButton.Text = "BUY"
-    buyButton.Font = Enum.Font.GothamBold
-    buyButton.TextSize = 14
-    buyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    buyButton.BackgroundColor3 = Color3.fromRGB(0, 150, 70)
-    buyButton.BorderSizePixel = 0
-    buyButton.Parent = card
-
-    local buyCorner = Instance.new("UICorner")
-    buyCorner.CornerRadius = UDim.new(0, 6)
-    buyCorner.Parent = buyButton
-
-    -- Hover effect
-    buyButton.MouseEnter:Connect(function()
-        TweenService:Create(buyButton, TweenInfo.new(0.15), {
+    -- Hover: TweenService color shift
+    buyBtn.MouseEnter:Connect(function()
+        TweenService:Create(buyBtn, TweenInfo.new(0.15), {
             BackgroundColor3 = Color3.fromRGB(0, 180, 85),
         }):Play()
     end)
-
-    buyButton.MouseLeave:Connect(function()
-        TweenService:Create(buyButton, TweenInfo.new(0.15), {
+    buyBtn.MouseLeave:Connect(function()
+        TweenService:Create(buyBtn, TweenInfo.new(0.15), {
             BackgroundColor3 = Color3.fromRGB(0, 150, 70),
         }):Play()
     end)
 
-    -- Purchase handler
-    buyButton.Activated:Connect(function()
-        buyButton.Text = "..."
-        buyButton.Active = false
-
-        local success = purchaseRemote:InvokeServer(itemData.id)
-
+    -- Click: server-validated purchase
+    buyBtn.Activated:Connect(function()
+        local success = purchaseRemote:InvokeServer(item.id)
         if success then
-            buyButton.Text = "OWNED"
-            buyButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-            updateCoins()
-        else
-            buyButton.Text = "BUY"
-            buyButton.Active = true
-
-            -- Flash red to indicate failure
-            TweenService:Create(buyButton, TweenInfo.new(0.1), {
-                BackgroundColor3 = Color3.fromRGB(200, 50, 50),
-            }):Play()
-            task.delay(0.3, function()
-                TweenService:Create(buyButton, TweenInfo.new(0.2), {
-                    BackgroundColor3 = Color3.fromRGB(0, 150, 70),
-                }):Play()
-            end)
+            buyBtn.Text = "OWNED"
+            buyBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
         end
     end)
 
-    card.Parent = scrollFrame
+    card.Parent = parent
     return card
 end
-
--- Populate grid
-for i, item in SHOP_ITEMS do
-    createItemCard(item, i)
-end
-
---------------------------------------------------------------------------------
--- Open / Close Logic
---------------------------------------------------------------------------------
-
-local function updateCoins()
-    local coins = getCoinsRemote:InvokeServer()
-    coinsLabel.Text = tostring(coins) .. " Coins"
-end
-
-local function openShop()
-    screenGui.Enabled = true
-    updateCoins()
-
-    -- Animate in
-    shopPanel.Size = UDim2.new(0, 0, 0, 0)
-    overlay.BackgroundTransparency = 1
-
-    TweenService:Create(overlay, TweenInfo.new(0.25), {
-        BackgroundTransparency = 0.4,
-    }):Play()
-
-    TweenService:Create(shopPanel, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0.6, 0, 0.7, 0),
-    }):Play()
-end
-
-local function closeShop()
-    local fadeTween = TweenService:Create(overlay, TweenInfo.new(0.2), {
-        BackgroundTransparency = 1,
-    })
-    local shrinkTween = TweenService:Create(shopPanel, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-        Size = UDim2.new(0, 0, 0, 0),
-    })
-
-    fadeTween:Play()
-    shrinkTween:Play()
-
-    shrinkTween.Completed:Connect(function()
-        screenGui.Enabled = false
-    end)
-end
-
-closeButton.Activated:Connect(closeShop)
-overlay.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        closeShop()
-    end
-end)
-
--- Toggle with B key
-local UserInputService = game:GetService("UserInputService")
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == Enum.KeyCode.B then
-        if screenGui.Enabled then
-            closeShop()
-        else
-            openShop()
-        end
-    end
-end)
 ```
 
 ### Health Bar
 
-A smooth health bar with color transitions and damage feedback.
+Pattern: bar container + fill with Size scale, color thresholds, damage trail effect.
 
 ```luau
--- LocalScript in StarterPlayerScripts or StarterGui
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
+-- Pattern: Health bar with color thresholds + damage trail
+local function createHealthBar(parent)
+    local container = Instance.new("Frame", parent)
+    container.Size = UDim2.new(0.25, 0, 0, 28)
+    container.Position = UDim2.new(0.5, 0, 0.92, 0)
+    container.AnchorPoint = Vector2.new(0.5, 0.5)
+    container.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 6)
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+    local damageBar = Instance.new("Frame", container)
+    damageBar.Size = UDim2.new(1, 0, 1, 0)
+    damageBar.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    Instance.new("UICorner", damageBar).CornerRadius = UDim.new(0, 6)
 
---------------------------------------------------------------------------------
--- Create Health Bar GUI
---------------------------------------------------------------------------------
+    local fillBar = Instance.new("Frame", container)
+    fillBar.Size = UDim2.new(1, 0, 1, 0)
+    fillBar.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+    fillBar.ZIndex = 2
+    Instance.new("UICorner", fillBar).CornerRadius = UDim.new(0, 6)
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "HealthBarGui"
-screenGui.ResetOnSpawn = true
-screenGui.DisplayOrder = 5
-screenGui.IgnoreGuiInset = false
-screenGui.Parent = playerGui
+    local healthText = Instance.new("TextLabel", container)
+    healthText.Size = UDim2.new(1, 0, 1, 0)
+    healthText.Text = "100 / 100"
+    healthText.Font = Enum.Font.GothamBold
+    healthText.TextColor3 = Color3.fromRGB(240, 240, 240)
+    healthText.BackgroundTransparency = 1
+    healthText.ZIndex = 3
 
--- Container
-local container = Instance.new("Frame")
-container.Name = "HealthBarContainer"
-container.Size = UDim2.new(0.25, 0, 0, 28)
-container.Position = UDim2.new(0.5, 0, 0.92, 0)
-container.AnchorPoint = Vector2.new(0.5, 0.5)
-container.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-container.BorderSizePixel = 0
-container.Parent = screenGui
-
-local containerCorner = Instance.new("UICorner")
-containerCorner.CornerRadius = UDim.new(0, 6)
-containerCorner.Parent = container
-
-local containerStroke = Instance.new("UIStroke")
-containerStroke.Color = Color3.fromRGB(60, 60, 60)
-containerStroke.Thickness = 2
-containerStroke.Parent = container
-
-local sizeConstraint = Instance.new("UISizeConstraint")
-sizeConstraint.MinSize = Vector2.new(180, 24)
-sizeConstraint.MaxSize = Vector2.new(500, 36)
-sizeConstraint.Parent = container
-
--- Damage flash layer (behind the fill, shows briefly on damage)
-local damageBar = Instance.new("Frame")
-damageBar.Name = "DamageBar"
-damageBar.Size = UDim2.new(1, 0, 1, 0)
-damageBar.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-damageBar.BorderSizePixel = 0
-damageBar.ZIndex = 1
-damageBar.Parent = container
-
-local damageCorner = Instance.new("UICorner")
-damageCorner.CornerRadius = UDim.new(0, 6)
-damageCorner.Parent = damageBar
-
--- Main health fill
-local fillBar = Instance.new("Frame")
-fillBar.Name = "FillBar"
-fillBar.Size = UDim2.new(1, 0, 1, 0)
-fillBar.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
-fillBar.BorderSizePixel = 0
-fillBar.ZIndex = 2
-fillBar.Parent = container
-
-local fillCorner = Instance.new("UICorner")
-fillCorner.CornerRadius = UDim.new(0, 6)
-fillCorner.Parent = fillBar
-
-local fillGradient = Instance.new("UIGradient")
-fillGradient.Color = ColorSequence.new(
-    Color3.fromRGB(255, 255, 255),
-    Color3.fromRGB(200, 200, 200)
-)
-fillGradient.Rotation = 90
-fillGradient.Parent = fillBar
-
--- Health text
-local healthText = Instance.new("TextLabel")
-healthText.Name = "HealthText"
-healthText.Size = UDim2.new(1, 0, 1, 0)
-healthText.Text = "100 / 100"
-healthText.Font = Enum.Font.GothamBold
-healthText.TextSize = 14
-healthText.TextColor3 = Color3.fromRGB(255, 255, 255)
-healthText.TextStrokeTransparency = 0.5
-healthText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-healthText.BackgroundTransparency = 1
-healthText.ZIndex = 3
-healthText.Parent = container
-
---------------------------------------------------------------------------------
--- Color Thresholds
---------------------------------------------------------------------------------
-
-local COLOR_HIGH   = Color3.fromRGB(0, 200, 80)   -- green  (> 60%)
-local COLOR_MEDIUM = Color3.fromRGB(230, 180, 0)   -- yellow (30%-60%)
-local COLOR_LOW    = Color3.fromRGB(200, 40, 40)    -- red    (< 30%)
-
-local function getHealthColor(fraction: number): Color3
-    if fraction > 0.6 then
-        return COLOR_HIGH
-    elseif fraction > 0.3 then
-        -- Lerp between yellow and green
-        local t = (fraction - 0.3) / 0.3
-        return COLOR_MEDIUM:Lerp(COLOR_HIGH, t)
-    else
-        -- Lerp between red and yellow
-        local t = fraction / 0.3
-        return COLOR_LOW:Lerp(COLOR_MEDIUM, t)
-    end
+    return container, fillBar, damageBar, healthText
 end
 
---------------------------------------------------------------------------------
--- Update Logic
---------------------------------------------------------------------------------
-
-local currentTween: Tween? = nil
-local damageTween: Tween? = nil
-
-local function updateHealthBar(health: number, maxHealth: number)
+local function updateHealthBar(fillBar, damageBar, healthText, health, maxHealth)
     local fraction = math.clamp(health / maxHealth, 0, 1)
-    local targetColor = getHealthColor(fraction)
+    local color = if fraction > 0.6
+        then Color3.fromRGB(0, 200, 80)
+        elseif fraction > 0.3
+        then Color3.fromRGB(230, 180, 0)
+        else Color3.fromRGB(200, 40, 40)
 
-    healthText.Text = string.format("%d / %d", math.ceil(health), maxHealth)
+    healthText.Text = `${math.ceil(health)} / ${maxHealth}`
 
-    -- Cancel any running tween
-    if currentTween then
-        currentTween:Cancel()
-    end
-
-    -- Smooth fill tween
-    currentTween = TweenService:Create(fillBar, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    TweenService:Create(fillBar, TweenInfo.new(0.4), {
         Size = UDim2.new(fraction, 0, 1, 0),
-        BackgroundColor3 = targetColor,
-    })
-    currentTween:Play()
+        BackgroundColor3 = color,
+    }):Play()
 
-    -- Damage trail: the red bar shrinks slower, creating a "trailing" effect
-    if damageTween then
-        damageTween:Cancel()
-    end
-    damageTween = TweenService:Create(damageBar, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        Size = UDim2.new(fraction, 0, 1, 0),
-    })
+    -- Damage trail: shrinks slower for trailing effect
     task.delay(0.3, function()
-        if damageTween then
-            damageTween:Play()
-        end
-    end)
-
-    -- Low health pulse effect
-    if fraction <= 0.25 then
-        local pulse = TweenService:Create(container, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
-            BackgroundTransparency = 0.3,
-        })
-        pulse:Play()
-        container:SetAttribute("PulseTween", true)
-    else
-        -- Stop pulsing
-        if container:GetAttribute("PulseTween") then
-            container:SetAttribute("PulseTween", false)
-            TweenService:Create(container, TweenInfo.new(0.2), {
-                BackgroundTransparency = 0,
-            }):Play()
-        end
-    end
-
-    -- Screen flash on significant damage
-    if fraction < 0.5 then
-        local flash = Instance.new("Frame")
-        flash.Size = UDim2.new(1, 0, 1, 0)
-        flash.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-        flash.BackgroundTransparency = 0.7
-        flash.BorderSizePixel = 0
-        flash.ZIndex = 10
-        flash.Parent = screenGui
-
-        local flashTween = TweenService:Create(flash, TweenInfo.new(0.3), {
-            BackgroundTransparency = 1,
-        })
-        flashTween:Play()
-        flashTween.Completed:Connect(function()
-            flash:Destroy()
-        end)
-    end
-end
-
---------------------------------------------------------------------------------
--- Connect to Character Health
---------------------------------------------------------------------------------
-
-local function onCharacterAdded(character: Model)
-    local humanoid = character:WaitForChild("Humanoid")
-
-    -- Initialize
-    updateHealthBar(humanoid.Health, humanoid.MaxHealth)
-
-    -- Listen for changes
-    humanoid.HealthChanged:Connect(function(newHealth: number)
-        updateHealthBar(newHealth, humanoid.MaxHealth)
+        TweenService:Create(damageBar, TweenInfo.new(0.8), {
+            Size = UDim2.new(fraction, 0, 1, 0),
+        }):Play()
     end)
 end
-
-if player.Character then
-    onCharacterAdded(player.Character)
-end
-player.CharacterAdded:Connect(onCharacterAdded)
 ```
 
 ### Notification Toast
 
+Pattern: toast notification with slide-in animation and auto-dismiss via `task.delay`.
+
 ```luau
-local TweenService = game:GetService("TweenService")
-local Players = game:GetService("Players")
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "NotificationGui"
-screenGui.ResetOnSpawn = false
-screenGui.DisplayOrder = 50
-screenGui.Parent = playerGui
-
--- Container for stacking toasts
-local toastContainer = Instance.new("Frame")
-toastContainer.Name = "ToastContainer"
-toastContainer.Size = UDim2.new(0.3, 0, 0.5, 0)
-toastContainer.Position = UDim2.new(1, -16, 0, 16)
-toastContainer.AnchorPoint = Vector2.new(1, 0)
-toastContainer.BackgroundTransparency = 1
-toastContainer.Parent = screenGui
-
-local listLayout = Instance.new("UIListLayout")
-listLayout.FillDirection = Enum.FillDirection.Vertical
-listLayout.VerticalAlignment = Enum.VerticalAlignment.Top
-listLayout.Padding = UDim.new(0, 8)
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Parent = toastContainer
-
-local function showToast(message: string, duration: number?, color: Color3?)
+-- Pattern: Toast notification with slide-in + auto-dismiss
+local function showToast(message, duration)
     duration = duration or 3
-    color = color or Color3.fromRGB(40, 40, 60)
 
     local toast = Instance.new("Frame")
     toast.Size = UDim2.new(1, 0, 0, 50)
-    toast.BackgroundColor3 = color
+    toast.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
     toast.BackgroundTransparency = 1
     toast.BorderSizePixel = 0
-    toast.LayoutOrder = tick() -- newer toasts go below
-    toast.Parent = toastContainer
+    toast.LayoutOrder = tick()
+    Instance.new("UICorner", toast).CornerRadius = UDim.new(0, 8)
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = toast
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(100, 100, 140)
-    stroke.Thickness = 1
-    stroke.Transparency = 1
-    stroke.Parent = toast
-
-    local label = Instance.new("TextLabel")
+    local label = Instance.new("TextLabel", toast)
     label.Size = UDim2.new(1, -24, 1, 0)
     label.Position = UDim2.new(0, 12, 0, 0)
     label.Text = message
     label.Font = Enum.Font.GothamBold
-    label.TextSize = 14
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.TextTransparency = 1
-    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
     label.BackgroundTransparency = 1
-    label.Parent = toast
+    label.TextTransparency = 1
 
-    -- Slide in
-    local slideIn = TweenService:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+    toast.Parent = toastContainer -- UIListLayout parent
+
+    TweenService:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         BackgroundTransparency = 0.1,
-    })
-    local textIn = TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 0 })
-    local strokeIn = TweenService:Create(stroke, TweenInfo.new(0.3), { Transparency = 0.5 })
+    }):Play()
+    TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
 
-    slideIn:Play()
-    textIn:Play()
-    strokeIn:Play()
-
-    -- Auto-dismiss
     task.delay(duration, function()
-        local fadeOut = TweenService:Create(toast, TweenInfo.new(0.3), { BackgroundTransparency = 1 })
-        local textOut = TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 1 })
-        fadeOut:Play()
-        textOut:Play()
-        fadeOut.Completed:Connect(function()
-            toast:Destroy()
-        end)
+        local fade = TweenService:Create(toast, TweenInfo.new(0.3), { BackgroundTransparency = 1 })
+        fade:Play()
+        fade.Completed:Connect(function() toast:Destroy() end)
     end)
 end
-
--- Usage
-showToast("Quest completed: Defeat 10 Goblins!")
-showToast("Not enough coins!", 4, Color3.fromRGB(140, 30, 30))
 ```
 
 ### Dialog / Popup System
 
+Pattern: modal overlay, tween open/close, BindableEvent for async result.
+
 ```luau
-local TweenService = game:GetService("TweenService")
-local Players = game:GetService("Players")
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "DialogGui"
-screenGui.ResetOnSpawn = false
-screenGui.DisplayOrder = 100 -- above everything
-screenGui.Enabled = false
-screenGui.Parent = playerGui
-
-local overlay = Instance.new("Frame")
-overlay.Size = UDim2.new(1, 0, 1, 0)
-overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-overlay.BackgroundTransparency = 1
-overlay.BorderSizePixel = 0
-overlay.Parent = screenGui
-
-local dialogFrame = Instance.new("Frame")
-dialogFrame.Name = "DialogFrame"
-dialogFrame.Size = UDim2.new(0.35, 0, 0, 180)
-dialogFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-dialogFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-dialogFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-dialogFrame.BorderSizePixel = 0
-dialogFrame.Parent = screenGui
-
-Instance.new("UICorner", dialogFrame).CornerRadius = UDim.new(0, 12)
-local dStroke = Instance.new("UIStroke")
-dStroke.Color = Color3.fromRGB(90, 90, 130)
-dStroke.Thickness = 2
-dStroke.Parent = dialogFrame
-
-local dialogTitle = Instance.new("TextLabel")
-dialogTitle.Name = "Title"
-dialogTitle.Size = UDim2.new(0.9, 0, 0, 36)
-dialogTitle.Position = UDim2.new(0.5, 0, 0, 16)
-dialogTitle.AnchorPoint = Vector2.new(0.5, 0)
-dialogTitle.Text = "Confirm"
-dialogTitle.Font = Enum.Font.GothamBold
-dialogTitle.TextSize = 22
-dialogTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-dialogTitle.BackgroundTransparency = 1
-dialogTitle.Parent = dialogFrame
-
-local dialogMessage = Instance.new("TextLabel")
-dialogMessage.Name = "Message"
-dialogMessage.Size = UDim2.new(0.85, 0, 0, 50)
-dialogMessage.Position = UDim2.new(0.5, 0, 0, 56)
-dialogMessage.AnchorPoint = Vector2.new(0.5, 0)
-dialogMessage.Text = "Are you sure?"
-dialogMessage.Font = Enum.Font.Gotham
-dialogMessage.TextSize = 16
-dialogMessage.TextColor3 = Color3.fromRGB(200, 200, 210)
-dialogMessage.TextWrapped = true
-dialogMessage.BackgroundTransparency = 1
-dialogMessage.Parent = dialogFrame
-
-local confirmBtn = Instance.new("TextButton")
-confirmBtn.Name = "ConfirmButton"
-confirmBtn.Size = UDim2.new(0.4, 0, 0, 40)
-confirmBtn.Position = UDim2.new(0.27, 0, 1, -20)
-confirmBtn.AnchorPoint = Vector2.new(0.5, 1)
-confirmBtn.Text = "Confirm"
-confirmBtn.Font = Enum.Font.GothamBold
-confirmBtn.TextSize = 16
-confirmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-confirmBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 70)
-confirmBtn.BorderSizePixel = 0
-confirmBtn.Parent = dialogFrame
-Instance.new("UICorner", confirmBtn).CornerRadius = UDim.new(0, 8)
-
-local cancelBtn = Instance.new("TextButton")
-cancelBtn.Name = "CancelButton"
-cancelBtn.Size = UDim2.new(0.4, 0, 0, 40)
-cancelBtn.Position = UDim2.new(0.73, 0, 1, -20)
-cancelBtn.AnchorPoint = Vector2.new(0.5, 1)
-cancelBtn.Text = "Cancel"
-cancelBtn.Font = Enum.Font.GothamBold
-cancelBtn.TextSize = 16
-cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-cancelBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 110)
-cancelBtn.BorderSizePixel = 0
-cancelBtn.Parent = dialogFrame
-Instance.new("UICorner", cancelBtn).CornerRadius = UDim.new(0, 8)
-
-type DialogOptions = {
-    title: string,
-    message: string,
-    confirmText: string?,
-    cancelText: string?,
-}
-
-local function showDialog(options: DialogOptions): boolean
-    dialogTitle.Text = options.title
-    dialogMessage.Text = options.message
-    confirmBtn.Text = options.confirmText or "Confirm"
-    cancelBtn.Text = options.cancelText or "Cancel"
-
+-- Pattern: Modal dialog with BindableEvent for async result
+local function showDialog(title, message)
     screenGui.Enabled = true
+    dialogTitle.Text = title
+    dialogMessage.Text = message
 
-    -- Animate in
     overlay.BackgroundTransparency = 1
     dialogFrame.Size = UDim2.new(0, 0, 0, 0)
-
     TweenService:Create(overlay, TweenInfo.new(0.2), { BackgroundTransparency = 0.5 }):Play()
     TweenService:Create(dialogFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Size = UDim2.new(0.35, 0, 0, 180),
     }):Play()
 
-    -- Wait for user response using a BindableEvent
-    local resolveEvent = Instance.new("BindableEvent")
+    -- Wait for user response via BindableEvent
+    local resolve = Instance.new("BindableEvent")
     local result = false
-
-    local confirmConn: RBXScriptConnection
-    local cancelConn: RBXScriptConnection
-
-    confirmConn = confirmBtn.Activated:Connect(function()
+    local c1 = confirmBtn.Activated:Connect(function()
         result = true
-        resolveEvent:Fire()
+        resolve:Fire()
     end)
-
-    cancelConn = cancelBtn.Activated:Connect(function()
-        result = false
-        resolveEvent:Fire()
+    local c2 = cancelBtn.Activated:Connect(function()
+        resolve:Fire()
     end)
+    resolve.Event:Wait()
+    c1:Disconnect()
+    c2:Disconnect()
+    resolve:Destroy()
 
-    resolveEvent.Event:Wait()
-    confirmConn:Disconnect()
-    cancelConn:Disconnect()
-    resolveEvent:Destroy()
-
-    -- Animate out
     TweenService:Create(overlay, TweenInfo.new(0.15), { BackgroundTransparency = 1 }):Play()
-    local closeTween = TweenService:Create(dialogFrame, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+    local closeTween = TweenService:Create(dialogFrame, TweenInfo.new(0.15), {
         Size = UDim2.new(0, 0, 0, 0),
     })
     closeTween:Play()
     closeTween.Completed:Wait()
-
     screenGui.Enabled = false
-
     return result
 end
-
--- Usage:
--- local confirmed = showDialog({
---     title = "Delete Item",
---     message = "This will permanently delete your Legendary Sword. This cannot be undone.",
---     confirmText = "Delete",
---     cancelText = "Keep",
--- })
--- if confirmed then
---     deleteItem()
--- end
 ```
 
 ---
@@ -1453,13 +943,13 @@ frame.AnchorPoint = Vector2.new(0.5, 0.5)
 -- BAD: creates garbage every frame, causes lag
 RunService.RenderStepped:Connect(function()
     local label = Instance.new("TextLabel")
-    label.Text = "Score: " .. score
+    label.Text = `Score: ${score}`
     label.Parent = screenGui
 end)
 
 -- GOOD: update existing element
 RunService.RenderStepped:Connect(function()
-    scoreLabel.Text = "Score: " .. score
+    scoreLabel.Text = `Score: ${score}`
 end)
 ```
 
@@ -1779,7 +1269,7 @@ local count = Value(0)
 local counterGui = New("ScreenGui")({
     [Children] = New("TextLabel")({
         Text = Computed(function()
-            return "Count: " .. count:get()
+            return `Count: ${count:get()}`
         end),
         Size = UDim2.new(0, 200, 0, 50),
     })
@@ -1803,7 +1293,7 @@ local count = source(0)
 
 local gui = create("ScreenGui")({
     create("TextLabel")({
-        Text = function() return "Count: " .. count() end,
+        Text = function() return `Count: ${count()}` end,
         Size = UDim2.new(0, 200, 0, 50),
     })
 })
@@ -1835,6 +1325,10 @@ If the UI is simple (a few labels, a button, a health bar), manual Instance mani
 - DevForum: Designing UI - Tips and Best Practices (Roblox Staff)
 - DevForum: Design Mobile First
 - DevForum: GUI Optimization Tips
+- DevForum: epochzx — Container Frame Rule for ScreenGui
+- DevForum: uiuxartist (Roblox Staff) — Scale vs Offset guidelines
+- DevForum: PictureFolder — UI Design Tips and Best Practices (119 likes)
+- DevForum: Modern UI Colour Schemes — dark palette guidelines
 - Fusion: github.com/dphfox/Fusion (MIT)
 - Vide: github.com/centau/vide (MIT)
 - brockmartin/roblox-game-skill (MIT) — base content
