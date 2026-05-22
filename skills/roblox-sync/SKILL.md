@@ -62,6 +62,65 @@ If MCP-only and project exceeds light-touch scope (>500 lines/module or >10 modu
 - **Sync errors not auto-detected**: restart Studio. Roblox is fixing this.
 - **Duplicate-name hierarchy errors**: avoid duplicate names within a sync container.
 
+## Version Control with Git
+
+Script Sync puts `.luau` files on disk. Git works with files on disk. Use them together.
+
+### Setup (after sync is confirmed)
+
+```bash
+cd ~/projects/<game-name>
+git init
+git add .
+git commit -m "initial sync"
+```
+
+### .gitignore for Roblox projects
+
+```gitignore
+# Pi
+.pi/
+
+# Roblox build files (binary, don't track)
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# OS
+.DS_Store
+Thumbs.db
+```
+
+### Agent responsibilities
+
+- **Suggest commits at natural breakpoints.** After completing a system, fixing a batch of bugs, or before a risky change: "Want to commit what we've built so far?"
+- **Use git diff to review changes.** Before committing, `git diff` to show the user what changed. This is the review loop.
+- **Commit messages should be descriptive.** "add DataService with ProfileStore session locking" not "update files."
+- **Branch for risky work.** If the user wants to experiment (new architecture, major refactor), suggest a branch first: `git checkout -b refactor/combat-system`.
+- **Don't auto-commit without asking.** Always confirm before `git commit`. The user should see what's being committed.
+
+### Common git operations the agent should know
+
+| Operation | Command | When |
+|-----------|---------|------|
+| See what changed | `git diff` | Before committing |
+| Stage changes | `git add -A` or `git add <file>` | Before committing |
+| Commit | `git commit -m "message"` | After staging |
+| See history | `git log --oneline -10` | When user asks "what changed" |
+| Undo last commit (keep changes) | `git reset --soft HEAD~1` | When user wants to redo commit |
+| Create branch | `git checkout -b <name>` | Before risky/experimental work |
+| Switch branch | `git checkout <name>` | When switching context |
+| Merge branch | `git merge <name>` | When experimental work is ready |
+
+### Conflict handling
+
+If git merge conflicts occur in `.luau` files, the agent should:
+1. Read the conflicting files
+2. Show the user the conflict markers
+3. Suggest a resolution based on what each side changed
+4. Help resolve and commit
+
 ## If User Already Has Rojo/Argon
 
 Detect presence of `default.project.json` (Rojo) or `*.project.json` with Argon-specific fields. If found: filesystem is already source of truth, operate normally on disk. Don't suggest switching to Script Sync.
