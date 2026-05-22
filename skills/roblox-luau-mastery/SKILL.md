@@ -23,6 +23,19 @@ Load this reference when the task involves:
 
 Luau is Roblox's fork of Lua 5.1 with gradual typing, performance improvements, and additional built-in functions. It is NOT standard Lua 5.1 — it has its own type system, generics, `continue` keyword, compound assignment operators (`+=`, `-=`, etc.), string interpolation, and other extensions.
 
+### Helper Modules (vendored in this harness)
+
+The harness ships vendored copies of these libraries. Use them instead of raw Roblox equivalents:
+
+- **Promise** (evaera/roblox-lua-promise) — async control flow, retry, chaining. Use instead of raw coroutines for async work.
+- **Trove** (Sleitnick/RbxUtil) — cleanup/lifecycle management. Use instead of manually tracking connections and instances.
+- **GoodSignal** (stravant/goodsignal) — typed custom signals. Use instead ofBindableEvent for module-to-module communication.
+- **Comm** (Sleitnick/RbxUtil) — typed client-server remotes. Use instead of raw RemoteEvent/RemoteFunction.
+- **Component** (Sleitnick/RbxUtil) — CollectionService tag binding with lifecycle. Use instead of manual tag listeners.
+- **ProfileStore** (loleris/MadStudioRoblox) — session-locked DataStore with retry. Use instead of raw DataStoreService.
+
+The agent will auto-place these when applicable. You can veto by saying "use my own" or having an existing equivalent in your project.
+
 ---
 
 ## Core Concepts
@@ -67,7 +80,7 @@ end
 -- Variadic functions
 local function logMessage(prefix: string, ...: any)
     local args = { ... }
-    local message = prefix .. ": " .. table.concat(args, ", ")
+    local message = `{prefix}: {table.concat(args, ", ")}`
     print(message)
 end
 
@@ -97,6 +110,9 @@ print(fruits[1]) --> "apple"
 print(#fruits)   --> 3
 
 -- Dictionary (string keys)
+-- NOTE: name = "Alice" is shorthand for ["name"] = "Alice".
+-- Luau tables are NOT JSON objects. Keys are strings, not identifiers.
+-- Use shorthand for known keys, bracket notation for dynamic/computed keys.
 local player = {
     name = "Alice",
     health = 100,
@@ -104,6 +120,10 @@ local player = {
 }
 print(player.name)       --> "Alice"
 print(player["health"])  --> 100
+
+-- Dynamic keys REQUIRE bracket notation
+local fieldName = "health"
+print(player[fieldName]) --> 100
 
 -- Mixed table (legal but discouraged — see Sharp Edges)
 -- Avoid mixing array and dictionary parts
@@ -187,17 +207,13 @@ until success
 
 -- continue (Luau extension — skips to next iteration)
 for i = 1, 10 do
-    if i % 2 == 0 then
-        continue
-    end
+    if i % 2 == 0 then continue end
     print(i) -- prints odd numbers only
 end
 
 -- break exits the loop
 for i = 1, 100 do
-    if i > 10 then
-        break
-    end
+    if i > 10 then break end
     print(i)
 end
 ```
@@ -206,6 +222,7 @@ end
 
 ```luau
 -- String interpolation (Luau extension — backtick strings)
+-- ALWAYS prefer this over .. concatenation
 local name = "Alice"
 local level = 42
 local message = `{name} reached level {level}!`
@@ -215,9 +232,6 @@ print(message) --> "Alice reached level 42!"
 local price = 19.99
 local tax = 0.08
 print(`Total: ${price * (1 + tax)}`) --> "Total: $21.5892"
-
--- Concatenation (use sparingly — see Anti-Patterns)
-local greeting = "Hello, " .. name .. "!"
 
 -- Common string functions
 print(string.len("hello"))           --> 5
@@ -427,6 +441,9 @@ type Stack<T> = {
     pop: (self: Stack<T>) -> T?,
     peek: (self: Stack<T>) -> T?,
 }
+
+-- NOTE: In type definitions, self is explicit (it's a function signature).
+-- In actual method definitions, use : to hide self (see OOP Patterns).
 ```
 
 ### Type Exports
@@ -693,6 +710,7 @@ export type Weapon = typeof(setmetatable(
     Weapon
 ))
 
+-- Constructor uses . (static — no instance yet)
 function Weapon.new(name: string, damage: number, durability: number): Weapon
     local self = setmetatable({}, Weapon)
     self.name = name
@@ -702,7 +720,8 @@ function Weapon.new(name: string, damage: number, durability: number): Weapon
     return self
 end
 
-function Weapon.attack(self: Weapon, target: Humanoid): boolean
+-- Methods use : (self is implicit, don't write it as a parameter)
+function Weapon:attack(target: Humanoid): boolean
     if self.durability <= 0 then
         warn(`{self.name} is broken!`)
         return false
@@ -713,15 +732,15 @@ function Weapon.attack(self: Weapon, target: Humanoid): boolean
     return true
 end
 
-function Weapon.repair(self: Weapon)
+function Weapon:repair()
     self.durability = self.maxDurability
 end
 
-function Weapon.toString(self: Weapon): string
+function Weapon:toString(): string
     return `{self.name} (DMG: {self.damage}, DUR: {self.durability}/{self.maxDurability})`
 end
 
--- Usage
+-- Usage: . for constructor, : for methods
 local sword = Weapon.new("Iron Sword", 25, 100)
 sword:attack(targetHumanoid)
 print(sword:toString())
@@ -753,11 +772,11 @@ function Entity.new(name: string, health: number, position: Vector3): Entity
     return self
 end
 
-function Entity.takeDamage(self: Entity, amount: number)
+function Entity:takeDamage(amount: number)
     self.health = math.max(0, self.health - amount)
 end
 
-function Entity.isAlive(self: Entity): boolean
+function Entity:isAlive(): boolean
     return self.health > 0
 end
 
@@ -791,14 +810,14 @@ function Enemy.new(name: string, health: number, position: Vector3, attackDamage
     return self
 end
 
-function Enemy.attackTarget(self: Enemy, target: Entity)
+function Enemy:attackTarget(target: Entity)
     local distance = (target.position - self.position).Magnitude
     if distance <= self.aggroRange then
         target:takeDamage(self.attackDamage)
     end
 end
 
--- Usage
+-- Usage: inherited methods also use :
 local goblin = Enemy.new("Goblin", 50, Vector3.new(0, 0, 0), 10)
 goblin:takeDamage(20)       -- inherited from Entity
 goblin:attackTarget(player) -- defined on Enemy
@@ -1035,6 +1054,27 @@ end
 
 ## Common Idioms
 
+### Ternary with and/or
+
+Luau has no ternary operator. Use `and`/`or` chains for single-value conditions:
+
+```luau
+-- Basic ternary: condition and truthy_value or falsy_value
+local status = (health > 0 and "alive" or "dead")
+local label = (isAdmin and "Admin" or "User")
+local color = (isActive and Color3.new(0, 1, 0) or Color3.new(1, 0, 0))
+
+-- With function calls
+local displayName = (player.DisplayName ~= "" and player.DisplayName or player.Name)
+
+-- Nested (use sparingly — readability drops fast)
+local tier = (score >= 90 and "S" or score >= 70 and "A" or score >= 50 and "B" or "C")
+
+-- CAVEAT: if the truthy value is nil or false, the expression breaks:
+-- (condition and nil or "fallback") returns "fallback" even when condition is true
+-- In that case, use a proper if/else block
+```
+
 ### Table Operations
 
 ```luau
@@ -1263,15 +1303,15 @@ type PlayerData = { name: string, level: number }
 -- camelCase: variables, function names, method names, parameters
 local playerHealth = 100
 local function calculateDamage(baseDamage: number): number end
-function Weapon.getDurability(self: Weapon): number end
+function Weapon:getDurability(): number end
 
 -- UPPER_CASE: constants
 local MAX_HEALTH = 100
 local RESPAWN_DELAY = 5
 local DEFAULT_SPEED = 16
 
--- Prefix private members with underscore (convention, not enforced)
-function MyClass._internalMethod(self: MyClass) end
+-- Prefix private methods with underscore (convention, not enforced)
+function MyClass:_internalMethod() end
 local _cachedValue = nil
 ```
 
@@ -1337,7 +1377,7 @@ return InventoryManager
 - Clean up event connections and instances when no longer needed to avoid memory leaks.
 - Validate all data received from clients on the server. Never trust the client.
 - Use `pcall` / `xpcall` around any call that can fail (DataStores, HTTP, etc.).
-- Prefer `string.format()` or string interpolation over `..` concatenation in hot paths.
+- Use backtick interpolation (`{expr}`) for all string building. Never use `..` concatenation.
 - Use `table.freeze()` for configuration tables that should not be modified.
 
 ---
@@ -1385,24 +1425,27 @@ CollectionService:GetInstanceAddedSignal("Enemy"):Connect(function(enemy)
 end)
 ```
 
-### String Concatenation in Loops
+### String Concatenation
 
 ```luau
+-- BAD: .. concatenation is verbose and error-prone in hot paths
+local greeting = "Hello, " .. name .. "!"
+
 -- BAD: creates a new string every iteration (O(n^2) memory)
 local result = ""
 for i = 1, 1000 do
     result = result .. tostring(i) .. ","
 end
 
--- GOOD: collect into table, join once (O(n))
+-- GOOD: use backtick interpolation for all string building
+local greeting = `Hello, {name}!`
+
+-- GOOD: collect into table, join once for loops (O(n))
 local parts = {}
 for i = 1, 1000 do
     table.insert(parts, tostring(i))
 end
 local result = table.concat(parts, ",")
-
--- GOOD: string interpolation for small, fixed concatenations is fine
-local name = `{firstName} {lastName}`
 ```
 
 ### Global Variables
@@ -1569,7 +1612,7 @@ function MyClass.new()
     return setmetatable({}, MyClass)
 end
 
-function MyClass.doSomething(self: any)
+function MyClass:doSomething()
     print("doing something")
 end
 
@@ -1578,13 +1621,12 @@ obj:doSomething() --> ERROR: attempt to call a nil value
 -- Because __index is not set, method lookup fails
 
 -- Common mistake: using . instead of : for method definitions
-function MyClass.method(self: any) end  -- explicit self (works with both . and :)
-function MyClass:method() end            -- implicit self (syntactic sugar)
--- Both are valid, but be consistent. The explicit self style with type annotation
--- is preferred in modern Luau for better type checking.
+function MyClass.method(self: any) end  -- explicit self with . (verbose, avoid)
+function MyClass:method() end            -- implicit self with : (idiomatic, use this)
+-- Use : for all instance methods. Use . only for static constructors (new).
 
 -- Common mistake: modifying the metatable instead of the instance
-function MyClass.setName(self: any, name: string)
+function MyClass:setName(name: string)
     -- BAD: this sets it on the class table, shared by all instances!
     MyClass.name = name
 
@@ -1716,6 +1758,8 @@ AI models trained on JavaScript commonly generate patterns that don't exist in L
 | `new Foo()` | `setmetatable({}, Foo)` | |
 | `import x from "y"` | `local x = require(y)` | No ES modules |
 | `export default` | `return module` | Module returns its public API |
+| `str1 + str2` | `` `{str1}{str2}` `` | Use backtick interpolation, NOT `..` |
+| `"hello " + name` | `` `hello {name}` `` | Backticks are the Luau way |
 
 ### Type-Specific Confusion
 
