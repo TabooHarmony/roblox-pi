@@ -172,6 +172,11 @@ print(rng:NextInteger(1, 100))  --> [1, 100] integer
 
 Luau uses **gradual typing**: types are optional and can be added incrementally. The type checker runs at analysis time and does not affect runtime behavior.
 
+**2025-2026 Updates:**
+- **New Type Solver** (GA Nov 2025): faster, more accurate type checking. `--!nonstrict` is now the default for all scripts.
+- **`const` keyword**: defines constant bindings with static enforcement of immutability.
+- **Parallel Luau** (mature): Actor-based multithreading with `SharedTable` for cross-Actor data. Use `task.synchronize()` / `task.desynchronize()` to switch contexts.
+
 ### Basic Type Annotations
 
 ```luau

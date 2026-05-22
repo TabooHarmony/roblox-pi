@@ -530,6 +530,8 @@ This means:
 - **100,000 Robux** = ~**$380 USD**
 - **1,000,000 Robux** = ~**$3,800 USD**
 
+> **Upcoming (June 2026):** US creators 18+ will get a higher rate of ~$0.0054/Robux (42% increase). Requires identity verification.
+
 ### Revenue Projection Formulas
 
 ```
