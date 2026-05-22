@@ -640,54 +640,7 @@ task.cancel(thread)
 
 ### RemoteEvents and RemoteFunctions
 
-```luau
--- Server-client communication
-
--- SERVER SIDE
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-
-local damageEvent = Instance.new("RemoteEvent")
-damageEvent.Name = "DamageEvent"
-damageEvent.Parent = ReplicatedStorage
-
--- Listen for client requests
-damageEvent.OnServerEvent:Connect(function(player: Player, targetName: string, amount: number)
-    -- ALWAYS validate client input on the server
-    if typeof(targetName) ~= "string" then
-        return
-    end
-    if typeof(amount) ~= "number" or amount < 0 or amount > 100 then
-        return
-    end
-
-    local target = Players:FindFirstChild(targetName)
-    if not target then
-        return
-    end
-
-    -- Process validated request
-    applyDamage(target, amount)
-end)
-
--- Fire to a specific client
-damageEvent:FireClient(somePlayer, "You took damage!", 25)
-
--- Fire to all clients
-damageEvent:FireAllClients("Boss spawned!", bossPosition)
-
--- CLIENT SIDE
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local damageEvent = ReplicatedStorage:WaitForChild("DamageEvent")
-
--- Listen for server messages
-damageEvent.OnClientEvent:Connect(function(message: string, data: any)
-    print(message)
-end)
-
--- Send request to server
-damageEvent:FireServer("EnemyA", 50)
-```
+For server-client communication patterns (RemoteEvent, RemoteFunction, UnreliableRemoteEvent, BindableEvent), see **roblox-networking** → Client-Server Communication.
 
 ---
 
@@ -1488,52 +1441,9 @@ end
 
 ### Trusting Client Input
 
-```luau
--- BAD: applying client values without validation
-remoteEvent.OnServerEvent:Connect(function(player, damage, targetName)
-    local target = Players:FindFirstChild(targetName)
-    target.Character.Humanoid:TakeDamage(damage) -- client controls damage!
-end)
+For server-authoritative validation patterns (type checking, range checking, ownership, rate limiting), see **roblox-networking** → Client Validation.
 
--- GOOD: validate everything, use server-authoritative logic
-remoteEvent.OnServerEvent:Connect(function(player: Player, targetName: unknown)
-    -- Type validation
-    if typeof(targetName) ~= "string" then
-        return
-    end
-
-    -- Existence validation
-    local target = Players:FindFirstChild(targetName)
-    if not target or not target.Character then
-        return
-    end
-
-    local targetHumanoid = target.Character:FindFirstChildOfClass("Humanoid")
-    if not targetHumanoid then
-        return
-    end
-
-    -- Server calculates damage based on attacker's weapon, not client data
-    local weapon = getEquippedWeapon(player)
-    if not weapon then
-        return
-    end
-
-    -- Range check
-    local attackerPos = player.Character and player.Character:GetPivot().Position
-    local targetPos = target.Character:GetPivot().Position
-    if not attackerPos or (attackerPos - targetPos).Magnitude > weapon.range then
-        return
-    end
-
-    -- Cooldown check
-    if not canAttack(player) then
-        return
-    end
-
-    targetHumanoid:TakeDamage(weapon.damage)
-end)
-```
+**Core rule:** Never trust client input. Every `OnServerEvent` handler must validate types, ranges, and ownership before processing.
 
 ---
 

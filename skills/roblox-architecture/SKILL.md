@@ -315,140 +315,22 @@ local result = MathUtils.lerp(0, 100, 0.5) -- 50
 
 ## 5. Client-Server Communication
 
-### RemoteEvent (Async, One-Way)
+For implementation details (RemoteEvent, RemoteFunction, UnreliableRemoteEvent, BindableEvent, validation patterns), see **roblox-networking** → Client-Server Communication.
 
-Use for fire-and-forget messages. The sender does not wait for a response.
+**Conceptual overview:**
 
-**Server to Client:**
-```lua
--- ReplicatedStorage/Remotes/NotifyEvent (RemoteEvent instance)
+| Type | Direction | Blocking? | Use Case |
+|---|---|---|---|
+| `RemoteEvent` | Client ↔ Server | No | Actions, notifications, state changes |
+| `RemoteFunction` | Client → Server only (safe) | Yes (yields) | Data requests, queries |
+| `BindableEvent` | Same side | N/A (local) | Decoupled same-side messaging |
+| `UnreliableRemoteEvent` | Client ↔ Server | No | High-frequency cosmetic data |
 
--- SERVER: fire to one client
-local NotifyEvent = game:GetService("ReplicatedStorage").Remotes.NotifyEvent
-
-NotifyEvent:FireClient(player, "You picked up a coin!", 1)
-
--- SERVER: fire to ALL clients
-NotifyEvent:FireAllClients("A boss has spawned!")
-```
-
-```lua
--- CLIENT: listen for server messages
-local NotifyEvent = game:GetService("ReplicatedStorage").Remotes.NotifyEvent
-
-NotifyEvent.OnClientEvent:Connect(function(message, amount)
-    print("Server says:", message, amount)
-end)
-```
-
-**Client to Server:**
-```lua
--- CLIENT: fire to server
-local DamageEvent = game:GetService("ReplicatedStorage").Remotes.DamageEvent
-DamageEvent:FireServer(targetId, 25)
-```
-
-```lua
--- SERVER: listen for client messages (player is auto-injected as first arg)
-local DamageEvent = game:GetService("ReplicatedStorage").Remotes.DamageEvent
-
-DamageEvent.OnServerEvent:Connect(function(player, targetId, damage)
-    -- ALWAYS validate! Never trust the client.
-    if not isValidTarget(targetId) then return end
-    if damage > MAX_ALLOWED_DAMAGE then return end
-
-    applyDamage(player, targetId, damage)
-end)
-```
-
-### RemoteFunction (Sync, Two-Way / Request-Response)
-
-Use when the caller needs a return value. **Only use `InvokeServer` (client calling server).** Avoid `InvokeClient` because if the client disconnects or errors, the server thread hangs.
-
-```lua
--- CLIENT: request data from server
-local GetInventory = game:GetService("ReplicatedStorage").Remotes.GetInventory
-
-local inventory = GetInventory:InvokeServer()
-for _, item in inventory do
-    print(item.Name, item.Quantity)
-end
-```
-
-```lua
--- SERVER: handle the request
-local GetInventory = game:GetService("ReplicatedStorage").Remotes.GetInventory
-
-GetInventory.OnServerInvoke = function(player)
-    -- player is auto-injected
-    local data = DataManager.getPlayerData(player)
-    return data.Inventory
-end
-```
-
-> **Warning:** Never use `RemoteFunction:InvokeClient()`. If the client's callback errors or the player leaves, the server-side calling thread yields forever. Use `RemoteEvent` pairs instead if you need server-to-client request/response.
-
-### BindableEvent (Same-Side Communication)
-
-Use for decoupled communication between scripts on the **same** side (server-to-server or client-to-client). Does not cross the network boundary.
-
-```lua
--- SERVER: script A fires, script B listens
-local RoundEndEvent = Instance.new("BindableEvent")
-RoundEndEvent.Name = "RoundEndEvent"
-RoundEndEvent.Parent = game:GetService("ServerScriptService")
-
--- Script A
-RoundEndEvent:Fire("Team Alpha", 15)
-
--- Script B
-RoundEndEvent.Event:Connect(function(winningTeam, score)
-    print(`{winningTeam} won with {score} points`)
-end)
-```
-
-### UnreliableRemoteEvent (High-Frequency, Loss-Tolerant)
-
-Use for data that is sent very frequently where occasional packet loss is acceptable. Roblox may drop packets to reduce bandwidth. Ideal for cosmetic/visual updates.
-
-**Use cases:** Character facing direction, cursor position, cosmetic effects, real-time position hints.
-
-**Do NOT use for:** Damage, purchases, state changes, anything where a missed packet causes bugs.
-
-```lua
--- ReplicatedStorage/Remotes/CursorPosition (UnreliableRemoteEvent instance)
-
--- CLIENT: send cursor position every frame
-local RunService = game:GetService("RunService")
-local CursorEvent = game:GetService("ReplicatedStorage").Remotes.CursorPosition
-
-RunService.RenderStepped:Connect(function()
-    local mousePos = UserInputService:GetMouseLocation()
-    CursorEvent:FireServer(mousePos)
-end)
-```
-
-```lua
--- SERVER: relay to other players
-CursorEvent.OnServerEvent:Connect(function(player, mousePos)
-    -- Relay to everyone except the sender
-    for _, otherPlayer in Players:GetPlayers() do
-        if otherPlayer ~= player then
-            CursorEvent:FireClient(otherPlayer, player, mousePos)
-        end
-    end
-end)
-```
-
-### Communication Summary Table
-
-| Type | Direction | Blocking? | Reliable? | Use Case |
-|---|---|---|---|---|
-| `RemoteEvent` | Client <-> Server | No | Yes | Actions, notifications, state changes |
-| `RemoteFunction` | Client -> Server only (safe) | Yes (yields) | Yes | Data requests, queries |
-| `BindableEvent` | Same side | No | N/A (local) | Decoupled same-side messaging |
-| `BindableFunction` | Same side | Yes (yields) | N/A (local) | Same-side request/response |
-| `UnreliableRemoteEvent` | Client <-> Server | No | No | High-frequency cosmetic data |
+**Core rules:**
+- Server is authoritative. Never trust client input.
+- Use `RemoteEvent` for fire-and-forget. Use `RemoteFunction` only when the caller needs a return value.
+- Never use `RemoteFunction:InvokeClient()` — if the client errors or disconnects, the server thread hangs forever.
+- `UnreliableRemoteEvent` for cosmetic data only (cursor position, facing direction). Never for damage, purchases, or state.
 
 ---
 
@@ -821,42 +703,14 @@ Modules should depend on abstractions (function calls, events), not on internal 
 
 The server is the **single source of truth** for all game state. Clients render and predict, but the server validates and authorizes.
 
-```lua
--- BAD: Client decides damage and tells server
--- Client: FireServer("DealDamage", target, 9999)  -- exploiter sets 9999
-
--- GOOD: Client tells server "I attacked target", server calculates damage
--- Client: FireServer("AttackRequest", targetId)
--- Server: validates range, cooldown, calculates damage from weapon stats
-```
-
 ### Validate All Client Input
 
-Every `OnServerEvent` and `OnServerInvoke` handler must validate:
-- **Type checking:** Is the argument the expected type? (`typeof(value) == "string"`)
-- **Range checking:** Is the number within expected bounds?
-- **Ownership checking:** Does this player have permission to perform this action?
-- **Rate limiting:** Is this player sending requests too fast?
+For implementation details (type checking, range checking, ownership, rate limiting), see **roblox-networking** → Client Validation.
 
-```lua
-RemoteEvent.OnServerEvent:Connect(function(player, targetId, ...)
-    -- Type check
-    if typeof(targetId) ~= "string" then return end
-
-    -- Existence check
-    local target = findEntityById(targetId)
-    if not target then return end
-
-    -- Range check
-    local character = player.Character
-    if not character then return end
-    local distance = (character.PrimaryPart.Position - target.Position).Magnitude
-    if distance > MAX_INTERACTION_RANGE then return end
-
-    -- Process the valid request
-    processAction(player, target)
-end)
-```
+**Core rules:**
+- Every `OnServerEvent` handler must validate types, ranges, and ownership before processing.
+- Never let the client set currency, health, or any authoritative value directly.
+- Client sends intent ("I attacked target X"), server calculates outcome.
 
 ### Use ModuleScripts Everywhere
 
@@ -953,24 +807,9 @@ return Constants
 
 ### Polling Instead of Events
 
-**Problem:** Using `while true do wait(1)` loops to check if something changed, instead of connecting to events.
+For polling vs event-driven patterns, see **roblox-luau-mastery** → Anti-Patterns.
 
-**Fix:** Use `.Changed`, `.GetPropertyChangedSignal()`, `RemoteEvent`, or `BindableEvent` to react to changes.
-
-```lua
--- BAD: polling
-while true do
-    task.wait(1)
-    if player.Character and player.Character.Humanoid.Health <= 0 then
-        handleDeath()
-    end
-end
-
--- GOOD: event-driven
-humanoid.Died:Connect(function()
-    handleDeath()
-end)
-```
+**Core rule:** Use events (`.Changed`, `GetPropertyChangedSignal()`, `Died`, etc.) instead of `while true do task.wait()` loops.
 
 ### Overusing RemoteFunctions
 
@@ -980,19 +819,7 @@ end)
 
 ### Ignoring `task` Library
 
-**Problem:** Using deprecated `wait()`, `spawn()`, and `delay()` which have throttling issues and unclear behavior.
-
-**Fix:** Use the `task` library: `task.wait()`, `task.spawn()`, `task.delay()`, `task.defer()`.
-
-```lua
--- BAD
-wait(1)
-spawn(function() doWork() end)
-
--- GOOD
-task.wait(1)
-task.spawn(function() doWork() end)
-```
+For deprecated `wait()`/`spawn()`/`delay()` vs the `task` library, see **roblox-luau-mastery** → Task Library.
 
 ### Instance.new with Parent Argument
 
