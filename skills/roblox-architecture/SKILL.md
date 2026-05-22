@@ -1050,3 +1050,24 @@ spawn(function() doWork() end)
 task.wait(1)
 task.spawn(function() doWork() end)
 ```
+
+### Instance.new with Parent Argument
+
+**Problem:** `Instance.new("Part", workspace)` passes the parent as the second argument. This causes the instance to be parented immediately during construction, which yields internally and can create race conditions — the instance replicates to clients before you've finished setting its properties.
+
+```luau
+-- BAD: parent during construction, yields, race condition
+local part = Instance.new("Part", workspace)
+part.Size = Vector3.new(4, 1, 4) -- may already be visible to clients
+part.Anchored = true
+part.BrickColor = BrickColor.new("Bright red")
+
+-- GOOD: create, configure, then parent
+local part = Instance.new("Part")
+part.Size = Vector3.new(4, 1, 4)
+part.Anchored = true
+part.BrickColor = BrickColor.new("Bright red")
+part.Parent = workspace -- parent last
+```
+
+**Rule:** Always set `Parent` last. Create the instance, configure all properties, then parent it.

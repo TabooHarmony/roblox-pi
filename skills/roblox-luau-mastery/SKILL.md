@@ -1673,3 +1673,58 @@ while j <= 5 do
 end
 print(fns2[1]()) --> 1 (correct)
 ```
+
+---
+
+## JS → Luau Translation Table
+
+AI models trained on JavaScript commonly generate patterns that don't exist in Luau. This table covers the most frequent mistakes.
+
+| JavaScript | Luau | Notes |
+|------------|------|-------|
+| `arr.map(fn)` | `table.create(#arr)` + for loop, or use a utility | No built-in map/filter/reduce on tables |
+| `arr.filter(fn)` | Loop with `table.insert` into new table | No built-in filter |
+| `arr.find(fn)` | Loop with early return | No built-in find |
+| `arr.includes(x)` | `table.find(arr, x) ~= nil` | Returns index or nil |
+| `arr.push(x)` | `table.insert(arr, x)` | |
+| `arr.pop()` | `table.remove(arr)` | Removes and returns last element |
+| `arr.splice(i, n)` | `table.remove(arr, i)` in a loop | No splice equivalent |
+| `arr.length` or `arr.length` | `#arr` | `#` operator, not a property |
+| `obj.keys(x)` | No direct equivalent — use `for k in x do` | |
+| `obj.values(x)` | `for _, v in x do` | |
+| `Object.assign(a, b)` | `for k, v in b do a[k] = v end` | No spread operator |
+| `const x = ...` | `local x = ...` | No const/let/var |
+| `let x = ...` | `local x = ...` | |
+| `function(x) { return x }` | `function(x) return x end` | No arrow functions |
+| `(x) => x * 2` | `function(x) return x * 2 end` | No arrow functions |
+| `x === y` | `x == y` | No `===` in Luau, `==` is strict |
+| `x !== y` | `x ~= y` | Not `!=` |
+| `null` | `nil` | No null/undefined distinction |
+| `typeof x` | `typeof(x)` for Roblox types, `type(x)` for Luau types | Parentheses required |
+| `console.log(x)` | `print(x)` | |
+| `x ?? y` | `x or y` | Luau `or` returns the value, not a boolean |
+| `x?.y` | `x and x.y` | No optional chaining |
+| `{...obj}` | Manual table copy with loop | No spread operator |
+| `[...arr]` | Manual copy with loop or `table.move` | No spread operator |
+| `new Map()` | Regular table `{}` | Luau tables are dictionaries by default |
+| `new Set()` | `{[value] = true}` pattern | Use table as set |
+| `Promise.all(arr)` | `Promise.all(arr)` | Same if using evaera/Promise |
+| `async/await` | `coroutine` or Promise chains | No async/await syntax |
+| `try/catch` | `pcall(fn)` or `xpcall(fn, handler)` | No try/catch |
+| `throw error` | `error("message")` | |
+| `class Foo { }` | `local Foo = {} Foo.__index = Foo` | Prototype-based OOP |
+| `new Foo()` | `setmetatable({}, Foo)` | |
+| `import x from "y"` | `local x = require(y)` | No ES modules |
+| `export default` | `return module` | Module returns its public API |
+
+### Type-Specific Confusion
+
+| JavaScript | Luau | Why AI Gets It Wrong |
+|------------|------|---------------------|
+| `0 == ""` → `true` | `0 == ""` → `false` | Luau has no type coercion in `==` |
+| `"" == false` → `true` | `"" == false` → `false` | Only `nil` and `false` are falsy |
+| `if (0)` → falsy | `if 0 then` → truthy | `0`, `""`, `{}` are all truthy in Luau |
+| `x = null` → typeof `object` | `x = nil` → type `nil` | No null/undefined split |
+| `Array.isArray(x)` | `type(x) == "table"` | No Array type distinction |
+| `x.push()` on string | N/A — strings are not indexable | No string methods, use `string.*` library |
+
